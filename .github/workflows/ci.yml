@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 18 is the floor declared in engines; 24 is the current LTS.
+        node: ['18', '20', '22', '24']
+    name: node ${{ matrix.node }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - run: npm test
+
+  # The data file IS the product, so prove the published tarball carries it.
+  # A `files` entry that stops matching data/ would otherwise ship a package
+  # whose every lookup returns null.
+  packaged:
+    runs-on: ubuntu-latest
+    name: the tarball contains the dataset
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm pack
+      - name: install the tarball into a clean project and geocode
+        run: |
+          mkdir -p /tmp/consumer && cd /tmp/consumer
+          npm init -y >/dev/null
+          npm install "$GITHUB_WORKSPACE"/us-zip-centroids-*.tgz
+          node -e '
+            const geo = require("us-zip-centroids");
+            const { entries, error } = geo.datasetInfo();
+            if (error) throw new Error("dataset did not load: " + error);
+            if (entries < 30000) throw new Error("expected ~33,000 ZCTAs, got " + entries);
+            if (!geo.zipToCoords("30305")) throw new Error("30305 did not resolve");
+            console.log("ok:", entries, "ZCTAs");
+          '

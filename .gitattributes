@@ -1,0 +1,2 @@
+# The dataset is the product — keep it byte-identical on every platform.
+*.csv text eol=lf

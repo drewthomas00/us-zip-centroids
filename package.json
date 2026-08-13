@@ -1,0 +1,53 @@
+{
+  "name": "us-zip-centroids",
+  "version": "1.0.0",
+  "description": "Offline US ZIP code to latitude/longitude. Bundled Census ZCTA Gazetteer, no geocoder, no API key, no network call — and the address never leaves your infrastructure.",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "sideEffects": false,
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "zip-centroids.js",
+    "data/zip_centroids.csv",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --test"
+  },
+  "keywords": [
+    "zip",
+    "zipcode",
+    "postal-code",
+    "geocoding",
+    "offline",
+    "latitude",
+    "longitude",
+    "centroid",
+    "census",
+    "zcta",
+    "haversine"
+  ],
+  "author": "Drew Thomas <drew@drewthomasbuilds.com> (https://drewthomasbuilds.com)",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/drewthomas00/us-zip-centroids.git"
+  },
+  "bugs": {
+    "url": "https://github.com/drewthomas00/us-zip-centroids/issues"
+  },
+  "homepage": "https://github.com/drewthomas00/us-zip-centroids#readme",
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {}
+}
