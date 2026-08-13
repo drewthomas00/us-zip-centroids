@@ -1,6 +1,10 @@
 # us-zip-centroids
 
+[![npm](https://img.shields.io/npm/v/us-zip-centroids)](https://www.npmjs.com/package/us-zip-centroids)
 [![CI](https://github.com/drewthomas00/us-zip-centroids/actions/workflows/ci.yml/badge.svg)](https://github.com/drewthomas00/us-zip-centroids/actions/workflows/ci.yml)
+[![dependencies](https://img.shields.io/badge/dependencies-none-brightgreen)](https://www.npmjs.com/package/us-zip-centroids?activeTab=dependencies)
+[![node](https://img.shields.io/node/v/us-zip-centroids)](https://www.npmjs.com/package/us-zip-centroids)
+[![license](https://img.shields.io/npm/l/us-zip-centroids)](LICENSE)
 
 Offline US ZIP code → latitude/longitude. No geocoder, no API key, no network call.
 
@@ -106,6 +110,15 @@ it. The data file *is* the product here, so a `files` entry that stopped
 matching `data/` would publish a package whose every lookup returns `null` —
 and every test would still pass, because they run against the source tree.
 
+## Related packages
+
+Small, dependency-light pieces pulled out of production systems I've built:
+
+- **[tcpa-quiet-hours](https://github.com/drewthomas00/tcpa-quiet-hours)** — is it legal to send this marketing message right now?
+- **[twilio-signature-verify](https://github.com/drewthomas00/twilio-signature-verify)** — verify `X-Twilio-Signature`, including behind a reverse proxy
+- **[pg-cron-lease](https://github.com/drewthomas00/pg-cron-lease)** — make an in-process cron job a singleton across replicas, using Postgres
+
 ## License
 
-MIT for the code. The bundled Census data is public domain.
+MIT © [Drew Thomas](https://drewthomasbuilds.com) for the code.
+The bundled Census data is a US Government work in the public domain.
