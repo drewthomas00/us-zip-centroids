@@ -1,6 +1,6 @@
 {
   "name": "us-zip-centroids",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "description": "Offline US ZIP code to latitude/longitude. Bundled Census ZCTA Gazetteer, no geocoder, no API key, no network call — and the address never leaves your infrastructure.",
   "main": "index.js",
   "types": "index.d.ts",
