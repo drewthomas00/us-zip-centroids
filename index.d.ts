@@ -14,7 +14,8 @@ export interface GeocodeResult {
 export interface GeocodeOptions {
   /**
    * ISO-3166 alpha-2, alpha-3 or numeric, or the English name — for the US or
-   * a covered territory (PR, VI, GU, MP, AS). Null/absent means "try US".
+   * a covered territory (PR, VI, GU, MP, AS). Null/absent means "try US";
+   * any other type resolves to null.
    */
   country?: string | number | null;
 }
@@ -24,7 +25,7 @@ export interface DatasetInfo {
   path: string;
   /** True when ZIP_CENTROIDS_PATH supplied it. */
   isOverride: boolean;
-  /** ZCTAs loaded. The bundled dataset carries roughly 33,000. */
+  /** ZCTAs loaded. The bundled dataset carries 33,791. */
   entries: number;
   /** Null when the table loaded cleanly. */
   error: string | null;
@@ -33,10 +34,11 @@ export interface DatasetInfo {
 /**
  * Extract a 5-digit ZIP, or null when the input is not recognisably one.
  *
- * Accepts a bare ZIP or ZIP+4, dictated digits ('3 0 3 0 5'), and a delimited
- * 5-digit run inside prose (the last one, where an address keeps its ZIP). Rejects anything else — a date, a phone number and
- * a street address do NOT become ZIPs. A number is padded (1001 → '01001');
- * a string '1001' is not.
+ * Accepts a bare ZIP or ZIP+4, dictated digits ('3 0 3 0 5'), and a 5-digit
+ * run standing alone in prose (the last one, where an address keeps its ZIP).
+ * A date, a phone number, a house number, a box or unit number and a number
+ * glued to letters or symbols do NOT become ZIPs. A number is padded
+ * (1001 → '01001'); a string '1001' is not.
  */
 export declare function normalizeZip(raw: string | number | null | undefined): string | null;
 

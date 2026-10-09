@@ -3,30 +3,32 @@
 /**
  * us-zip-centroids — offline US ZIP -> latitude/longitude, with no geocoder.
  *
- * Maps a 5-digit ZIP to its centroid using a bundled reference table, so the
+ * Maps a 5-digit ZIP to a point inside it using a bundled reference table, so the
  * lookup costs no network call, no API key, and no per-request fee — and the
  * address being resolved never leaves your infrastructure. That last property
  * is often the reason to reach for this: sending user addresses to a
  * third-party geocoder is a data-sharing decision, not just a technical one.
  *
- * A centroid is ample for bounding-box filtering and haversine distance
- * ranking. It is NOT a substitute for street-level geocoding — a ZIP centroid
- * is the middle of an area, not a building, and the four decimal places it is
- * stored to (about 11 m) say nothing about how far it sits from an address.
+ * The point is the Census "internal point" of the ZIP's area: its centroid
+ * where that lies inside the area, otherwise the nearest interior point. It
+ * is ample for bounding-box filtering and distance ranking. It is NOT a
+ * substitute for street-level geocoding — it marks an area, not a building,
+ * and the four decimal places it is stored to (about 11 m) say nothing about
+ * how far it sits from an address.
  *
- * Data: the committed `data/zip_centroids.csv` is the full US Census ZCTA
- * Gazetteer — roughly 33,000 ZCTAs covering the states, DC, Puerto Rico, and
- * the island territories. It is generated from the authoritative Census file, never
- * hand-authored, and is public domain. Set ZIP_CENTROIDS_PATH to pin a fresher
- * vintage or a custom table at deploy time without a code change.
+ * Data: the committed `data/zip_centroids.csv` is the 2025 US Census ZCTA
+ * Gazetteer — 33,791 ZCTAs covering the states, DC, Puerto Rico, and the
+ * island territories — built by scripts/build-dataset.js, never hand-authored,
+ * and public domain. Set ZIP_CENTROIDS_PATH to pin another vintage or a custom
+ * table at deploy time without a code change.
  *
- * Fails loud, never guesses. That phrase is doing real work here, and it is
- * mostly about parsing rather than lookup: any string with five digits
- * somewhere in it can be read as a ZIP, so "2024-01-15" and "Suite 200, 123
- * Main St" will happily resolve to points in Washington DC if you let them.
- * A wrong coordinate is worse than no coordinate, because downstream it is
- * indistinguishable from a real one — so input that is not recognisably a ZIP
- * resolves to null. See normalizeZip for exactly what counts.
+ * Refuses to guess. That is mostly about parsing rather than lookup: any
+ * string with five digits somewhere in it can be read as a ZIP, so
+ * "2024-01-15" and "Suite 200, 123 Main St" will happily resolve to points in
+ * Washington DC if you let them. A wrong coordinate is worse than no
+ * coordinate, because downstream it is indistinguishable from a real one — so
+ * input that is not recognisably a ZIP resolves to null. See normalizeZip for
+ * exactly what counts.
  *
  * US-only: a non-US postal code is a coverage gap, not an answer.
  */
@@ -39,11 +41,21 @@ const ZIP_RE = /^\d{5}$/;
 /** The whole input is a ZIP, or a ZIP+4 with or without a separator. */
 const WHOLE_ZIP_RE = /^(\d{5})(?:[-\s]?\d{4})?$/;
 
-/** Digits and the separators dictation and phone keypads produce. */
-const DIGITS_AND_SEPARATORS_RE = /^[\d\s.\-()]+$/;
+/** Nothing but digits, spaces and hyphens: a dictated number, a phone, a date. */
+const DIGITS_ONLY_RE = /^[\d\s-]+$/;
 
-/** Every 5-digit run inside prose, not butted against more digits. */
-const EMBEDDED_ZIP_RE = /(?<!\d)(\d{5})(?:-\d{4})?(?!\d)/g;
+/** Dictation: single digits, each set apart — '3 0 3 0 5', '3-0-3-0-5'. */
+const DICTATED_RE = /^\d(?:[\s-]+\d)+$/;
+
+/**
+ * A 5-digit run standing alone as a word inside prose. Not glued to letters,
+ * digits or the symbols that make a number something else — '#12345',
+ * '$12345.67', 'A30305', '30305abc', a decimal like '33.83412'.
+ */
+const EMBEDDED_ZIP_RE = /(?<![\w.$#-])(\d{5})(?:-\d{4})?(?![\w-]|[.,]\d)/g;
+
+/** Words that make the number after them a box, unit or reference — not a ZIP. */
+const NOT_A_ZIP_BEFORE_RE = /(?:\b(?:box|apt|apartment|suite|ste|unit|room|rm|order|invoice)\.?|#)\s*$/i;
 
 /**
  * Country values that mean "covered by this table": ISO-3166 alpha-2,
@@ -54,12 +66,12 @@ const EMBEDDED_ZIP_RE = /(?<!\d)(\d{5})(?:-\d{4})?(?!\d)/g;
  * free-text country columns hold them more often than any code.
  */
 const US_COUNTRY_CODES = new Set([
-  'US', 'USA', '840', 'UNITED STATES', 'UNITED STATES OF AMERICA',
-  'PR', 'PRI', '630', // Puerto Rico
-  'VI', 'VIR', '850', // US Virgin Islands
-  'GU', 'GUM', '316', // Guam
-  'MP', 'MNP', '580', // Northern Mariana Islands
-  'AS', 'ASM', '016', // American Samoa
+  'US', 'USA', '840', 'U.S.', 'U.S.A.', 'UNITED STATES', 'UNITED STATES OF AMERICA',
+  'PR', 'PRI', '630', 'PUERTO RICO',
+  'VI', 'VIR', '850', 'US VIRGIN ISLANDS', 'U.S. VIRGIN ISLANDS', 'VIRGIN ISLANDS',
+  'GU', 'GUM', '316', 'GUAM',
+  'MP', 'MNP', '580', 'NORTHERN MARIANA ISLANDS',
+  'AS', 'ASM', '016', 'AMERICAN SAMOA',
 ]);
 
 const LAT_BOUND = 90;
@@ -67,7 +79,7 @@ const LNG_BOUND = 180;
 
 /**
  * Below this, the table is almost certainly truncated rather than merely
- * pruned. The real Gazetteer carries roughly 33,000 rows; a deliberately
+ * pruned. The real Gazetteer carries 33,791 rows; a deliberately
  * small custom table is a supported use, so this only warns.
  */
 const SUSPICIOUSLY_SMALL = 100;
@@ -107,7 +119,7 @@ function warn(message) {
  *
  * Coordinates are bounds-checked because ZIP_CENTROIDS_PATH lets anyone supply
  * the table: a finite-but-impossible latitude would otherwise load happily and
- * put a recipient somewhere off the planet.
+ * put a ZIP somewhere off the planet.
  */
 function parseRow(line) {
   const parts = line.split(',');
@@ -165,10 +177,24 @@ function load() {
   }
 
   const lines = content.split('\n');
+  // A header, when there is one, must say zip,lat,lng in that order. Bounds
+  // cannot catch swapped columns — every US longitude is a valid latitude — so
+  // a 'zip,lng,lat' table would otherwise load cleanly and put every ZIP in
+  // the wrong place. A headerless table is fine: its first line is a row.
+  const first = lines.find((line) => line.trim());
+  if (first && !parseRow(first.trim())) {
+    const header = first.trim().replace(/^\uFEFF/, '').toLowerCase().split(',').map((h) => h.trim());
+    if (header.join(',') !== 'zip,lat,lng') {
+      loadError = `unexpected header '${first.trim()}' (expected zip,lat,lng)`;
+      warn(`refusing the centroid file (${source} = ${file}): ${loadError} — `
+        + 'every lookup will return null.');
+      centroids = table;
+      return centroids;
+    }
+  }
+
   // The dataset is plain numeric CSV — no quoting or escaping — so split(',')
-  // is sufficient and fast over ~33k rows. The header line is not special-
-  // cased: 'zip,lat,lng' simply fails to parse as a row, which also means a
-  // headerless custom table does not silently lose its first entry.
+  // is sufficient and fast over ~34k rows.
   for (let i = 0; i < lines.length; i += 1) {
     const line = lines[i].trim();
     if (!line) continue;
@@ -185,7 +211,7 @@ function load() {
       + 'every lookup will return null.');
   } else if (table.size < SUSPICIOUSLY_SMALL && !isOverride) {
     loadError = `parsed only ${table.size} rows`;
-    warn(`the bundled centroid file parsed to only ${table.size} rows — expected ~33,000. `
+    warn(`the bundled centroid file parsed to only ${table.size} rows — expected 33,791. `
       + 'It is probably truncated.');
   }
 
@@ -200,15 +226,26 @@ function load() {
  * Three accepted shapes, narrowest first:
  *
  *   1. The whole value is a ZIP or ZIP+4 — '30305', '30305-1234', '303051234'.
- *   2. The value is only digits and separators, as dictation and keypads
- *      produce — '3 0 3 0 5'. Accepted at exactly 5 or 9 digits, so a phone
- *      number ('404-555-1234', 10) and a date ('2024-01-15', 8) are rejected
- *      rather than truncated into a plausible-looking ZIP.
- *   3. The value is prose containing a delimited 5-digit run —
- *      'Atlanta, GA 30305'. With more than one, the last wins, because that is
- *      where an address puts its ZIP: '10250 Peachtree Rd, Atlanta, GA 30305'
- *      is 30305, not the street number. 'Suite 200, 123 Main St' has no such
- *      run, so it is null rather than '20012'.
+ *   2. The value is dictated: single digits set apart by spaces or hyphens,
+ *      as speech-to-text produces — '3 0 3 0 5'. Accepted at exactly 5 or 9
+ *      digits. Any other mix of digits, spaces and hyphens is null: a phone
+ *      ('404-555-1234'), a date ('2024-01-15', '1-12-25') or '12 345' is not
+ *      squeezed into a plausible-looking ZIP.
+ *   3. The value is prose containing a 5-digit run that stands alone as a
+ *      word — 'Atlanta, GA 30305'. A run that is plainly something else is
+ *      skipped: glued to letters or symbols ('#12345', 'A30305', '$12345.67'),
+ *      after a word like Box, Suite, Apt, Unit or Order ('P.O. Box 30305'), or
+ *      a house number opening an address line ('10001 Westheimer Rd, …').
+ *      With more than one left, the last wins, because that is where an
+ *      address puts its ZIP: '10001 Westheimer Rd, Houston, TX 77042' is
+ *      77042, not the street number — which is itself a real ZIP, in
+ *      Manhattan, and exactly the plausible wrong answer this refuses to give.
+ *      'Suite 200, 123 Main St' has no such run, so it is null rather than
+ *      '20012'.
+ *
+ * Prose is still prose: a standalone five-digit number that is not a ZIP and
+ * fits none of the patterns above ('I need 12345 widgets') is read as one. If
+ * you hold a structured address, pass its postal-code field, not the line.
  *
  * A JS number is padded to five digits, because a number cannot carry a
  * leading zero: `1001` unambiguously means '01001' and recovering it is
@@ -238,17 +275,24 @@ function normalizeZip(raw) {
   const whole = WHOLE_ZIP_RE.exec(text);
   if (whole) return whole[1];
 
-  if (DIGITS_AND_SEPARATORS_RE.test(text)) {
+  if (DIGITS_ONLY_RE.test(text)) {
+    if (!DICTATED_RE.test(text)) return null;
     const digits = text.replace(/\D/g, '');
     return (digits.length === 5 || digits.length === 9) ? digits.slice(0, 5) : null;
   }
 
   // The LAST run, not the first: a US address ends with its ZIP, and a street
-  // number is very often five digits. Taking the first run would answer
-  // '10250 Peachtree Rd, Atlanta, GA 30305' with 10250 — a real ZIP, in New
-  // York, and exactly the plausible wrong answer this function refuses to give.
-  const runs = [...text.matchAll(EMBEDDED_ZIP_RE)];
-  return runs.length ? runs[runs.length - 1][1] : null;
+  // number is very often five digits.
+  let found = null;
+  for (const match of text.matchAll(EMBEDDED_ZIP_RE)) {
+    const before = text.slice(0, match.index);
+    const after = text.slice(match.index + match[0].length);
+    if (NOT_A_ZIP_BEFORE_RE.test(before)) continue;
+    // A house number: the first thing on an address line, followed by a word.
+    if (/(?:^|[,;:\n])\s*$/.test(before) && /^\s+[A-Za-z]/.test(after)) continue;
+    found = match[1];
+  }
+  return found;
 }
 
 /**
@@ -264,7 +308,7 @@ function isValidZip(raw) {
 
 /**
  * Resolve ZIP input to `[lat, lng]`, or null if it isn't a valid ZIP or we have
- * no centroid for it (unknown -> fail loud upstream).
+ * no point for it.
  *
  * Returns a fresh array each call. Handing out the table's own entry lets one
  * caller normalising coordinates in place corrupt that ZIP for every other
@@ -285,15 +329,16 @@ function zipToCoords(raw) {
  * can't cover it.
  *
  * US-only: the bundled dataset is the US Census ZCTA Gazetteer, so an
- * EXPLICITLY non-US country resolves to null — a fail-loud coverage gap rather
- * than a wrong-but-plausible guess borrowed from a colliding US ZCTA. A
- * null/absent/empty country means "unknown, try US".
+ * EXPLICITLY non-US country resolves to null — a coverage gap rather than a
+ * wrong-but-plausible guess borrowed from a colliding US ZCTA. A
+ * null/absent/empty country means "unknown, try US"; anything that is not a
+ * string or a number (an array, an object) is null.
  *
  * `country` accepts ISO-3166 alpha-2, alpha-3 and numeric ('US', 'USA', 840)
  * and the English name, because records in the wild carry all of them and
  * silently geocoding nothing for a database full of 'USA' is a miserable thing
  * to debug. The territories the table covers (PR, VI, GU, MP, AS) are accepted
- * under their own codes too.
+ * under their own codes and names too.
  *
  * @param {?string|number} postalCode - a US ZIP (ZIP+4 tolerated)
  * @param {{ country?: ?string|number }} [opts]
@@ -302,11 +347,11 @@ function zipToCoords(raw) {
 function geocodePostalCode(postalCode, opts = {}) {
   const country = opts && opts.country;
   if (country !== null && country !== undefined) {
+    if (typeof country !== 'string' && typeof country !== 'number') return null;
     // A numeric code arrives as a number as often as a string, and 16 is
-    // American Samoa's '016' with the zero lost.
-    const code = typeof country === 'number'
-      ? String(country).padStart(3, '0')
-      : String(country).trim().toUpperCase();
+    // American Samoa's '016' with the zero lost — either way.
+    let code = String(country).trim().toUpperCase().replace(/\s+/g, ' ');
+    if (/^\d{1,2}$/.test(code)) code = code.padStart(3, '0');
     if (code !== '' && !US_COUNTRY_CODES.has(code)) return null;
   }
   const coords = zipToCoords(postalCode);

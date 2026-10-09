@@ -1,8 +1,8 @@
 'use strict';
 
 /**
- * Pins the parsing contract — which is where "fails loud, never guesses" is
- * actually won or lost — plus the bundled dataset's coverage, the
+ * Pins the parsing contract — which is where "refuses to guess" is actually
+ * won or lost — plus the bundled dataset's coverage, the
  * ZIP_CENTROIDS_PATH override, and every way the table can fail to load.
  */
 
@@ -55,7 +55,7 @@ describe('normalizeZip — what counts as a ZIP', () => {
   });
 
   it('accepts dictated digits', () => {
-    // A caller reading their ZIP aloud is why this shape is supported at all.
+    // Speech-to-text output is why this shape is supported at all.
     assert.equal(geo.normalizeZip('3 0 3 0 5'), '30305');
     assert.equal(geo.normalizeZip('3-0-3-0-5'), '30305');
   });
@@ -77,9 +77,30 @@ describe('normalizeZip — what counts as a ZIP', () => {
     assert.equal(geo.normalizeZip('404-555-1234'), null);
   });
 
+  it('refuses short dates, decimals and digit groups that only total five', () => {
+    // Each of these strips to five digits, and most of those five are a real
+    // ZIP: '1-12-25' would have been Brooklyn. Dictation is single digits set
+    // apart; anything else made of digits is not squeezed into a ZIP.
+    for (const input of ['1-12-25', '1.12.25', '12-1-24', '6-30-25', '123.45', '12.345',
+      '1234.5', '12 345', '404-55', '(404) 55']) {
+      assert.equal(geo.normalizeZip(input), null, JSON.stringify(input));
+    }
+  });
+
+  it('skips five-digit numbers in prose that are plainly something else', () => {
+    for (const input of [
+      '10001 Westheimer Rd, Houston, TX', // a house number opening the line
+      '98101 Main St',
+      'P.O. Box 30305', 'Apt 10001', 'Suite 30305', 'Unit #30305',
+      'Order #12345', 'Order 12345 shipped', 'SKU A30305', 'GA30305', '30305abc',
+      'Total $12345.67', '33.83412,-84.39210',
+    ]) {
+      assert.equal(geo.normalizeZip(input), null, JSON.stringify(input));
+    }
+  });
+
   it('pads a NUMBER, because a number cannot carry a leading zero', () => {
     assert.equal(geo.normalizeZip(1001), '01001');
-    assert.equal(geo.normalizeZip(1001.0), '01001');
     assert.equal(geo.normalizeZip(30305), '30305');
     assert.equal(geo.normalizeZip(601), '00601');
   });
@@ -143,7 +164,7 @@ describe('the bundled national dataset', () => {
     // from the outside — every lookup just returns null.
     const { entries, error } = geo.datasetInfo();
     assert.equal(error, null);
-    assert.ok(entries > 30000, `expected ~33,000 ZCTAs, loaded ${entries}`);
+    assert.equal(entries, 33791, 'the 2025 Gazetteer carries 33,791 ZCTAs');
   });
 
   it('returns null for an unknown or malformed ZIP', () => {
@@ -188,6 +209,19 @@ describe('geocodePostalCode', () => {
     assert.notEqual(geo.geocodePostalCode('30305', { country: '' }), null);
   });
 
+  it('accepts the territories by English name, and a numeric code that lost its zero', () => {
+    assert.notEqual(geo.geocodePostalCode('96910', { country: 'Guam' }), null);
+    assert.notEqual(geo.geocodePostalCode('96799', { country: 'American Samoa' }), null);
+    assert.notEqual(geo.geocodePostalCode('96799', { country: 16 }), null);
+    assert.notEqual(geo.geocodePostalCode('96799', { country: '16' }), null);
+  });
+
+  it('refuses a country that is not a string or a number', () => {
+    // String(['US']) is 'US'; an array here is a schema bug upstream.
+    assert.equal(geo.geocodePostalCode('30305', { country: ['US'] }), null);
+    assert.equal(geo.geocodePostalCode('30305', { country: { code: 'US' } }), null);
+  });
+
   it('treats an explicitly non-US country as a coverage gap', () => {
     // 30305 IS a valid US ZCTA — a CA or DE record must not borrow its centroid.
     assert.equal(geo.geocodePostalCode('30305', { country: 'CA' }), null);
@@ -223,9 +257,24 @@ describe('ZIP_CENTROIDS_PATH', () => {
     assert.equal(geo.zipToCoords('99997'), null);
   });
 
+  it('refuses a table whose header names the columns in another order', () => {
+    // Bounds cannot catch swapped columns — every US longitude is a valid
+    // latitude — so a lng,lat table would load cleanly with every ZIP misplaced.
+    useTable('zip,lng,lat\n30305,-84.3921,33.8341\n');
+
+    assert.equal(geo.zipToCoords('30305'), null);
+    assert.match(geo.datasetInfo().error, /unexpected header 'zip,lng,lat'/);
+  });
+
+  it('accepts the header in any case, with surrounding spaces', () => {
+    useTable(' ZIP , Lat , LNG \n30305,33.8341,-84.3921\n');
+    assert.deepEqual(geo.zipToCoords('30305'), [33.8341, -84.3921]);
+    assert.equal(geo.datasetInfo().error, null);
+  });
+
   it('loads a headerless table without losing its first row', () => {
-    // The header is recognised by failing to parse, not by position, so a
-    // custom table with no header keeps row 0.
+    // A first line that parses as a row is a row, not a header, so a custom
+    // table with no header keeps row 0.
     useTable('00001,10.5,20.5\n00002,11.5,21.5\n');
 
     assert.deepEqual(geo.zipToCoords('00001'), [10.5, 20.5]);
@@ -320,10 +369,12 @@ describe('datasetInfo', () => {
 
 describe('addresses with more than one 5-digit run', () => {
   it('takes the ZIP at the end, not a five-digit street number', () => {
-    // 10250 is itself a real ZIP (New York), so the first-run answer would be
-    // a confident point 1,200 km away.
-    assert.equal(geo.normalizeZip('10250 Peachtree Rd, Atlanta, GA 30305'), '30305');
-    assert.equal(geo.normalizeZip('10250 Peachtree Rd NE, Atlanta, GA 30305-1234'), '30305');
+    // 10001 is itself a covered ZIP (Manhattan), so the first-run answer would
+    // be a confident point 2,300 km from Houston.
+    assert.ok(geo.zipToCoords('10001'), 'fixture: the street number is a real, covered ZIP');
+    assert.equal(geo.normalizeZip('10001 Westheimer Rd, Houston, TX 77042'), '77042');
+    assert.equal(geo.normalizeZip('10001 Westheimer Rd, Houston, TX 77042-1234, USA'), '77042');
+    assert.equal(geo.normalizeZip('Ship to:\n10001 Westheimer Rd\nHouston TX 77042'), '77042');
   });
 });
 
@@ -331,7 +382,7 @@ describe('geocodePostalCode — territories under their own country codes', () =
   it('answers a Puerto Rico ZIP whose record says PR, not US', () => {
     const coords = geo.zipToCoords('00901');
     assert.ok(coords, 'fixture: the table covers 00901');
-    for (const country of ['PR', 'pri', '630', 630]) {
+    for (const country of ['PR', 'pri', '630', 630, 'Puerto Rico']) {
       assert.deepEqual(
         geo.geocodePostalCode('00901', { country }),
         { latitude: coords[0], longitude: coords[1], source: 'zip_centroid' },

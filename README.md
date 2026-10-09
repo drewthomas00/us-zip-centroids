@@ -29,7 +29,7 @@ TypeScript types included. Zero dependencies.
 
 Three reasons, and the third is usually the real one.
 
-**Cost.** Commercial geocoders bill per request. Ranking search results by distance means resolving a coordinate on a hot path, and that adds up fast for something that never changes — a ZIP's centroid is the same today as it was last year.
+**Cost.** Commercial geocoders bill per request. Ranking search results by distance means resolving a coordinate on a hot path, and that adds up fast for something that barely changes between Census releases.
 
 **Latency and failure.** A network call in the middle of a query is a dependency that can be slow, rate-limited, or down. This is a memoized in-process lookup after the first read.
 
@@ -37,9 +37,9 @@ Three reasons, and the third is usually the real one.
 
 ## What you get, and what you don't
 
-A **ZIP centroid is the middle of an area, not a building.** Coordinates are stored to four decimal places (about 11 m), but the point itself can be kilometres from any given address in a large rural ZIP. That is ample for:
+A **ZIP's point marks an area, not a building.** It is the Census *internal point*: the area's centroid where that falls inside it, otherwise the nearest point that does — so every point lies within its own ZIP, even a crescent-shaped one. Coordinates are stored to four decimal places (about 11 m), but the point itself can be kilometres from any given address in a large rural ZIP. That is ample for:
 
-- bounding-box filtering and haversine distance ranking
+- bounding-box filtering and distance ranking
 - "within N miles of me" search
 - coarse regional grouping and analytics
 - resolving a spoken or typed ZIP to a search center
@@ -50,7 +50,7 @@ It is **not** a substitute for street-level geocoding. If you need to put a pin 
 
 **`zipToCoords(zip)`** → `[lat, lng]` or `null`. A fresh array each call, so mutating it can't corrupt the shared table.
 
-**`geocodePostalCode(code, opts)`** → `{ latitude, longitude, source }` or `null`. `opts.country` accepts ISO-3166 alpha-2, alpha-3 and numeric (`'US'`, `'USA'`, `840`) or `'United States'`, case- and whitespace-insensitive — and the codes of the territories the table covers (`'PR'`, `'VI'`, `'GU'`, `'MP'`, `'AS'`), since a Puerto Rico address usually carries `PR` as its country. Anything else returns `null` rather than a guess.
+**`geocodePostalCode(code, opts)`** → `{ latitude, longitude, source }` or `null`. `opts.country` accepts ISO-3166 alpha-2, alpha-3 and numeric (`'US'`, `'USA'`, `840`) or `'United States'`, case- and whitespace-insensitive — and the codes and names of the territories the table covers (`'PR'`, `'Puerto Rico'`, `'VI'`, `'GU'`, `'MP'`, `'AS'`), since a Puerto Rico address usually carries `PR` as its country. Anything else returns `null` rather than a guess.
 
 **`normalizeZip(zip)`** → canonical 5-digit string or `null`. See below for exactly what it accepts.
 
@@ -67,36 +67,39 @@ if (error) throw new Error(`ZIP centroids unusable: ${error}`);
 
 ## Behaviour worth knowing
 
-**It fails loud, never guesses — and that's mostly about parsing.** Any string with five digits in it *could* be read as a ZIP, and a naive reading turns `'2024-01-15'` into `20240` and `'Suite 200, 123 Main St'` into `20012` — both real coordinates in Washington DC. A wrong point is worse than no point, because downstream it's indistinguishable from a real one.
+**It refuses to guess — and that's mostly about parsing.** Any string with five digits in it *could* be read as a ZIP, and a naive reading turns `'2024-01-15'` into `20240` and `'Suite 200, 123 Main St'` into `20012` — both real coordinates in Washington DC. A wrong point is worse than no point, because downstream it's indistinguishable from a real one. Input that isn't recognisably a ZIP returns `null`.
 
 So `normalizeZip` accepts exactly three shapes:
 
 | Input | Result | |
 |---|---|---|
 | `'30305'`, `'30305-1234'`, `'303051234'` | `'30305'` | the whole value is a ZIP |
-| `'3 0 3 0 5'` | `'30305'` | digits and separators only, at 5 or 9 digits |
-| `'Atlanta, GA 30305'` | `'30305'` | a delimited 5-digit run in prose |
-| `'10250 Peachtree Rd, Atlanta, GA 30305'` | `'30305'` | the *last* run — where an address keeps its ZIP, not the street number |
-| `'2024-01-15'`, `'404-555-1234'` | `null` | 8 and 10 digits — not truncated to fit |
+| `'3 0 3 0 5'`, `'3-0-3-0-5'` | `'30305'` | dictated: single digits set apart, 5 or 9 of them |
+| `'Atlanta, GA 30305'` | `'30305'` | a 5-digit run standing alone in prose |
+| `'10001 Westheimer Rd, Houston, TX 77042'` | `'77042'` | the *last* run — where an address keeps its ZIP. The street number is itself a real ZIP, in Manhattan |
+| `'2024-01-15'`, `'1-12-25'`, `'404-555-1234'`, `'123.45'` | `null` | dates, phones and decimals — not squeezed into five digits |
+| `'10001 Westheimer Rd'`, `'P.O. Box 30305'`, `'Order #12345'` | `null` | a house number, a box or unit, a number glued to a symbol |
 | `'Suite 200, 123 Main St'` | `null` | no 5-digit run |
+
+Prose is still prose: a standalone five-digit number that isn't a ZIP and fits none of those patterns (`'I need 12345 widgets'`) is read as one. If you hold a structured address, pass its postal-code field rather than the whole line.
 
 **US-only, deliberately.** A non-US postal code is a coverage gap, not an answer, and returns `null`.
 
-**Leading zeros are restored on numbers.** `1001` and `1001.0` normalise to `'01001'`, because a number cannot carry a leading zero — recovering it is lossless, not a guess. A *string* `'1001'` is `null`: it's as likely to be a typo as a mangled ZIP. Northeastern ZIPs lose their zero the moment anything treats them as a number, and this is the single most common source of "why does Massachusetts geocode to nowhere".
+**Leading zeros are restored on numbers.** `1001` normalises to `'01001'` (as does a float-typed column's `1001.0`, which is the same number), because a number cannot carry a leading zero — recovering it is lossless, not a guess. A *string* `'1001'` is `null`: it's as likely to be a typo as a mangled ZIP. Northeastern ZIPs lose their zero the moment anything treats them as a number, and this is the single most common source of "why does Massachusetts geocode to nowhere".
 
 **An unreadable data file degrades to empty rather than throwing** — every lookup returns `null`, the failure is reported on stderr with its error code, and `datasetInfo().error` carries it for a healthcheck. That covers a missing file, a path pointing at a directory, and a permissions problem alike. A geocoding table that vanished should not take your process down, but it also shouldn't be invisible.
 
 **A CSV that parses to zero rows warns too.** A file truncated by a bad build looks exactly like a working install from the outside.
 
-**Coordinates are bounds-checked.** Since `ZIP_CENTROIDS_PATH` lets you supply the table, a row with an impossible latitude is dropped rather than trusted.
+**Coordinates are bounds-checked, and the header is too.** Since `ZIP_CENTROIDS_PATH` lets you supply the table, a row with an impossible latitude is dropped rather than trusted, and a header that isn't `zip,lat,lng` — say `zip,lng,lat`, which bounds alone can't catch — refuses the whole file, reported through `datasetInfo().error`.
 
 ## The data
 
-`data/zip_centroids.csv` is the full **US Census ZCTA Gazetteer** — roughly 33,000 ZCTAs covering the states, DC, Puerto Rico and the island territories. It is generated from the authoritative Census file, never hand-authored, and is a US Government work in the **public domain**.
+`data/zip_centroids.csv` is the **2025 US Census ZCTA Gazetteer** ([2025_Gaz_zcta_national.zip](https://www2.census.gov/geo/docs/maps-data/data/gazetteer/2025_Gazetteer/2025_Gaz_zcta_national.zip)) — 33,791 ZCTAs covering the states, DC, Puerto Rico and the island territories. It is the file's `GEOID`, `INTPTLAT` and `INTPTLONG` columns rounded to four decimal places, built by [`scripts/build-dataset.js`](scripts/build-dataset.js) and never hand-edited: run the script on that file and you get the committed CSV byte for byte. It is a US Government work in the **public domain**.
 
 **A ZCTA is not quite a ZIP.** The Census builds ZIP Code Tabulation Areas from residential delivery areas, so the ZIPs that are a PO-box block, a single building or a single large organisation have no ZCTA and resolve to `null` here even though they are real. That is the "we don't have that one" case `isValidZip` lets you tell apart.
 
-Point `ZIP_CENTROIDS_PATH` at another CSV (`zip,lat,lng`) to pin a fresher vintage or a custom table at deploy time without a code change.
+Point `ZIP_CENTROIDS_PATH` at another CSV (`zip,lat,lng`) to pin another vintage or a custom table at deploy time without a code change. `scripts/build-dataset.js` turns any year's Gazetteer file into that shape.
 
 The table is parsed once per process and memoized.
 
