@@ -316,3 +316,42 @@ describe('datasetInfo', () => {
     assert.equal(geo.datasetInfo().entries, 1);
   });
 });
+
+
+describe('addresses with more than one 5-digit run', () => {
+  it('takes the ZIP at the end, not a five-digit street number', () => {
+    // 10250 is itself a real ZIP (New York), so the first-run answer would be
+    // a confident point 1,200 km away.
+    assert.equal(geo.normalizeZip('10250 Peachtree Rd, Atlanta, GA 30305'), '30305');
+    assert.equal(geo.normalizeZip('10250 Peachtree Rd NE, Atlanta, GA 30305-1234'), '30305');
+  });
+});
+
+describe('geocodePostalCode — territories under their own country codes', () => {
+  it('answers a Puerto Rico ZIP whose record says PR, not US', () => {
+    const coords = geo.zipToCoords('00901');
+    assert.ok(coords, 'fixture: the table covers 00901');
+    for (const country of ['PR', 'pri', '630', 630]) {
+      assert.deepEqual(
+        geo.geocodePostalCode('00901', { country }),
+        { latitude: coords[0], longitude: coords[1], source: 'zip_centroid' },
+        `country ${JSON.stringify(country)}`,
+      );
+    }
+  });
+
+  it('pads a numeric code that lost its leading zero', () => {
+    assert.ok(geo.geocodePostalCode('96799', { country: 16 }), 'American Samoa, 016');
+  });
+
+  it('accepts the English name', () => {
+    assert.ok(geo.geocodePostalCode('30305', { country: 'United States' }));
+    assert.ok(geo.geocodePostalCode('30305', { country: ' united states of america ' }));
+  });
+
+  it('still refuses a foreign country', () => {
+    assert.equal(geo.geocodePostalCode('30305', { country: 'CA' }), null);
+    assert.equal(geo.geocodePostalCode('30305', { country: 'Canada' }), null);
+  });
+});
+

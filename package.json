@@ -33,8 +33,7 @@
     "longitude",
     "centroid",
     "census",
-    "zcta",
-    "haversine"
+    "zcta"
   ],
   "author": "Drew Thomas <drew@drewthomasbuilds.com> (https://drewthomasbuilds.com)",
   "license": "MIT",

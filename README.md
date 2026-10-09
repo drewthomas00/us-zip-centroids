@@ -37,7 +37,7 @@ Three reasons, and the third is usually the real one.
 
 ## What you get, and what you don't
 
-A **ZIP centroid is the middle of an area, not a building.** Precision is about 11 m at four decimal places, which is ample for:
+A **ZIP centroid is the middle of an area, not a building.** Coordinates are stored to four decimal places (about 11 m), but the point itself can be kilometres from any given address in a large rural ZIP. That is ample for:
 
 - bounding-box filtering and haversine distance ranking
 - "within N miles of me" search
@@ -50,7 +50,7 @@ It is **not** a substitute for street-level geocoding. If you need to put a pin 
 
 **`zipToCoords(zip)`** → `[lat, lng]` or `null`. A fresh array each call, so mutating it can't corrupt the shared table.
 
-**`geocodePostalCode(code, opts)`** → `{ latitude, longitude, source }` or `null`. `opts.country` accepts ISO-3166 alpha-2, alpha-3 and numeric (`'US'`, `'USA'`, `840`), case- and whitespace-insensitive; anything else returns `null` rather than a guess.
+**`geocodePostalCode(code, opts)`** → `{ latitude, longitude, source }` or `null`. `opts.country` accepts ISO-3166 alpha-2, alpha-3 and numeric (`'US'`, `'USA'`, `840`) or `'United States'`, case- and whitespace-insensitive — and the codes of the territories the table covers (`'PR'`, `'VI'`, `'GU'`, `'MP'`, `'AS'`), since a Puerto Rico address usually carries `PR` as its country. Anything else returns `null` rather than a guess.
 
 **`normalizeZip(zip)`** → canonical 5-digit string or `null`. See below for exactly what it accepts.
 
@@ -76,6 +76,7 @@ So `normalizeZip` accepts exactly three shapes:
 | `'30305'`, `'30305-1234'`, `'303051234'` | `'30305'` | the whole value is a ZIP |
 | `'3 0 3 0 5'` | `'30305'` | digits and separators only, at 5 or 9 digits |
 | `'Atlanta, GA 30305'` | `'30305'` | a delimited 5-digit run in prose |
+| `'10250 Peachtree Rd, Atlanta, GA 30305'` | `'30305'` | the *last* run — where an address keeps its ZIP, not the street number |
 | `'2024-01-15'`, `'404-555-1234'` | `null` | 8 and 10 digits — not truncated to fit |
 | `'Suite 200, 123 Main St'` | `null` | no 5-digit run |
 
@@ -91,7 +92,9 @@ So `normalizeZip` accepts exactly three shapes:
 
 ## The data
 
-`data/zip_centroids.csv` is the full **US Census ZCTA Gazetteer** — roughly 33,000 ZCTAs with national coverage including Alaska, Hawaii and Puerto Rico. It is generated from the authoritative Census file, never hand-authored, and is a US Government work in the **public domain**.
+`data/zip_centroids.csv` is the full **US Census ZCTA Gazetteer** — roughly 33,000 ZCTAs covering the states, DC, Puerto Rico and the island territories. It is generated from the authoritative Census file, never hand-authored, and is a US Government work in the **public domain**.
+
+**A ZCTA is not quite a ZIP.** The Census builds ZIP Code Tabulation Areas from residential delivery areas, so the ZIPs that are a PO-box block, a single building or a single large organisation have no ZCTA and resolve to `null` here even though they are real. That is the "we don't have that one" case `isValidZip` lets you tell apart.
 
 Point `ZIP_CENTROIDS_PATH` at another CSV (`zip,lat,lng`) to pin a fresher vintage or a custom table at deploy time without a code change.
 

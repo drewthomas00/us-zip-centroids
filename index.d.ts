@@ -12,7 +12,10 @@ export interface GeocodeResult {
 }
 
 export interface GeocodeOptions {
-  /** ISO-3166 alpha-2, alpha-3 or numeric. Null/absent means "try US". */
+  /**
+   * ISO-3166 alpha-2, alpha-3 or numeric, or the English name — for the US or
+   * a covered territory (PR, VI, GU, MP, AS). Null/absent means "try US".
+   */
   country?: string | number | null;
 }
 
@@ -31,7 +34,7 @@ export interface DatasetInfo {
  * Extract a 5-digit ZIP, or null when the input is not recognisably one.
  *
  * Accepts a bare ZIP or ZIP+4, dictated digits ('3 0 3 0 5'), and a delimited
- * 5-digit run inside prose. Rejects anything else — a date, a phone number and
+ * 5-digit run inside prose (the last one, where an address keeps its ZIP). Rejects anything else — a date, a phone number and
  * a street address do NOT become ZIPs. A number is padded (1001 → '01001');
  * a string '1001' is not.
  */

@@ -9,14 +9,14 @@
  * is often the reason to reach for this: sending user addresses to a
  * third-party geocoder is a data-sharing decision, not just a technical one.
  *
- * Centroid precision is ample for bounding-box filtering and haversine
- * distance ranking (about 11 m of imprecision at four decimal places). It is
- * NOT a substitute for street-level geocoding — a ZIP centroid is the middle
- * of an area, not a building.
+ * A centroid is ample for bounding-box filtering and haversine distance
+ * ranking. It is NOT a substitute for street-level geocoding — a ZIP centroid
+ * is the middle of an area, not a building, and the four decimal places it is
+ * stored to (about 11 m) say nothing about how far it sits from an address.
  *
  * Data: the committed `data/zip_centroids.csv` is the full US Census ZCTA
- * Gazetteer — roughly 33,000 ZCTAs covering the states, DC, and the
- * territories. It is generated from the authoritative Census file, never
+ * Gazetteer — roughly 33,000 ZCTAs covering the states, DC, Puerto Rico, and
+ * the island territories. It is generated from the authoritative Census file, never
  * hand-authored, and is public domain. Set ZIP_CENTROIDS_PATH to pin a fresher
  * vintage or a custom table at deploy time without a code change.
  *
@@ -42,11 +42,25 @@ const WHOLE_ZIP_RE = /^(\d{5})(?:[-\s]?\d{4})?$/;
 /** Digits and the separators dictation and phone keypads produce. */
 const DIGITS_AND_SEPARATORS_RE = /^[\d\s.\-()]+$/;
 
-/** A 5-digit run inside prose, not butted against more digits. */
-const EMBEDDED_ZIP_RE = /(?<!\d)(\d{5})(?:-\d{4})?(?!\d)/;
+/** Every 5-digit run inside prose, not butted against more digits. */
+const EMBEDDED_ZIP_RE = /(?<!\d)(\d{5})(?:-\d{4})?(?!\d)/g;
 
-/** ISO-3166 alpha-2, alpha-3 and numeric for the United States. */
-const US_COUNTRY_CODES = new Set(['US', 'USA', '840']);
+/**
+ * Country values that mean "covered by this table": ISO-3166 alpha-2,
+ * alpha-3 and numeric for the United States AND for the territories whose
+ * ZCTAs it carries. Puerto Rico is its own ISO country, and a checkout that
+ * stores `country: 'PR'` beside `zip: '00901'` must not be told the ZIP it
+ * has data for is out of coverage. The English names are here because
+ * free-text country columns hold them more often than any code.
+ */
+const US_COUNTRY_CODES = new Set([
+  'US', 'USA', '840', 'UNITED STATES', 'UNITED STATES OF AMERICA',
+  'PR', 'PRI', '630', // Puerto Rico
+  'VI', 'VIR', '850', // US Virgin Islands
+  'GU', 'GUM', '316', // Guam
+  'MP', 'MNP', '580', // Northern Mariana Islands
+  'AS', 'ASM', '016', // American Samoa
+]);
 
 const LAT_BOUND = 90;
 const LNG_BOUND = 180;
@@ -191,8 +205,10 @@ function load() {
  *      number ('404-555-1234', 10) and a date ('2024-01-15', 8) are rejected
  *      rather than truncated into a plausible-looking ZIP.
  *   3. The value is prose containing a delimited 5-digit run —
- *      'Atlanta, GA 30305'. 'Suite 200, 123 Main St' has no such run, so it is
- *      null rather than '20012'.
+ *      'Atlanta, GA 30305'. With more than one, the last wins, because that is
+ *      where an address puts its ZIP: '10250 Peachtree Rd, Atlanta, GA 30305'
+ *      is 30305, not the street number. 'Suite 200, 123 Main St' has no such
+ *      run, so it is null rather than '20012'.
  *
  * A JS number is padded to five digits, because a number cannot carry a
  * leading zero: `1001` unambiguously means '01001' and recovering it is
@@ -227,8 +243,12 @@ function normalizeZip(raw) {
     return (digits.length === 5 || digits.length === 9) ? digits.slice(0, 5) : null;
   }
 
-  const embedded = EMBEDDED_ZIP_RE.exec(text);
-  return embedded ? embedded[1] : null;
+  // The LAST run, not the first: a US address ends with its ZIP, and a street
+  // number is very often five digits. Taking the first run would answer
+  // '10250 Peachtree Rd, Atlanta, GA 30305' with 10250 — a real ZIP, in New
+  // York, and exactly the plausible wrong answer this function refuses to give.
+  const runs = [...text.matchAll(EMBEDDED_ZIP_RE)];
+  return runs.length ? runs[runs.length - 1][1] : null;
 }
 
 /**
@@ -269,9 +289,11 @@ function zipToCoords(raw) {
  * than a wrong-but-plausible guess borrowed from a colliding US ZCTA. A
  * null/absent/empty country means "unknown, try US".
  *
- * `country` accepts ISO-3166 alpha-2, alpha-3 and numeric ('US', 'USA', 840),
- * because records in the wild carry all three and silently geocoding nothing
- * for a database full of 'USA' is a miserable thing to debug.
+ * `country` accepts ISO-3166 alpha-2, alpha-3 and numeric ('US', 'USA', 840)
+ * and the English name, because records in the wild carry all of them and
+ * silently geocoding nothing for a database full of 'USA' is a miserable thing
+ * to debug. The territories the table covers (PR, VI, GU, MP, AS) are accepted
+ * under their own codes too.
  *
  * @param {?string|number} postalCode - a US ZIP (ZIP+4 tolerated)
  * @param {{ country?: ?string|number }} [opts]
@@ -280,7 +302,11 @@ function zipToCoords(raw) {
 function geocodePostalCode(postalCode, opts = {}) {
   const country = opts && opts.country;
   if (country !== null && country !== undefined) {
-    const code = String(country).trim().toUpperCase();
+    // A numeric code arrives as a number as often as a string, and 16 is
+    // American Samoa's '016' with the zero lost.
+    const code = typeof country === 'number'
+      ? String(country).padStart(3, '0')
+      : String(country).trim().toUpperCase();
     if (code !== '' && !US_COUNTRY_CODES.has(code)) return null;
   }
   const coords = zipToCoords(postalCode);
